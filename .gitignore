@@ -4,3 +4,7 @@ __pycache__/
 /env/
 /runs/
 /logs/
+.rsyncignore
+
+.ipynb_checkpoints/
+*.egg-info/

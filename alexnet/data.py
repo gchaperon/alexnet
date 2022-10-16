@@ -1,3 +1,6 @@
+import PIL.Image
+import xml.etree.ElementTree as ElementTree
+import joblib
 import tqdm
 import pathlib
 import typing as tp
@@ -5,71 +8,115 @@ import PIL.Image
 import pytorch_lightning as pl
 import torch
 import torchvision.transforms as transforms
+import numpy as np
+import numpy.typing as npt
 
 
 class ImageNetItem(tp.NamedTuple):
     image: torch.Tensor
-    cls: tp.Optional[int]
+    cls: str
 
 
-class TinyImageNet(torch.utils.data.Dataset[ImageNetItem]):
-    nclasses = 200
+def find_files(root_dir: pathlib.Path, extension: str) -> npt.NDArray[np.str_]:
+    return np.stack(
+        [
+            np.array(str(path), dtype=np.str_)
+            for path in tqdm.tqdm(
+                root_dir.glob(f"**/*.{extension}"),
+                desc=f"Searching {root_dir} for .{extension} files",
+            )
+        ]
+    )
+
+
+T = tp.TypeVar("T")
+
+
+class ImageNet(torch.utils.data.Dataset[T]):
+    name = "imagenet"
+    nclasses = 1000
 
     datadir: pathlib.Path
     split: tp.Literal["train", "val", "test"]
-    transform: tp.Callable
-
-    wnid_to_idx: tp.Dict[str, int]
+    image_paths: npt.NDArray[np.str_]
+    wnid_to_index: tp.Dict[str, int]
     wnid_to_name: tp.Dict[str, str]
-    image_data: tp.List[tp.Tuple[pathlib.Path, tp.Optional[str]]]
+    image_transforms: tp.Callable[[PIL.Image.Image], torch.Tensor]
+
+    @tp.overload
+    def __init__(
+        self: "ImageNet[ImageNetItem]", datadir: str, split: tp.Literal["train", "val"]
+    ) -> None:
+        ...
+
+    @tp.overload
+    def __init__(
+        self: "ImageNet[torch.Tensor]", datadir: str, split: tp.Literal["test"]
+    ) -> None:
+        ...
 
     def __init__(
         self,
         datadir: str,
         split: tp.Literal["train", "val", "test"],
-        transform: tp.Optional[tp.Callable] = None,
     ) -> None:
         super().__init__()
         self.datadir = pathlib.Path(datadir)
         self.split = split
-        self.transform = transform or transforms.ToTensor()
 
-        with open(self.datadir / "tiny-imagenet" / "wnids.txt") as wnids_file:
-            self.wnid_to_idx = {line.strip(): i for i, line in enumerate(wnids_file)}
-        with open(self.datadir / "tiny-imagenet" / "words.txt") as words_file:
-            self.wnid_to_name = dict(line.strip().split("\t") for line in words_file)
-
-        image_iter = (self.datadir / "tiny-imagenet" / split).glob("**/*.JPEG")
-        if split == "train":
-            self.image_data = [
-                (image_path, image_path.parts[-3]) for image_path in image_iter
-            ]
-        elif split == "val":
-            with open(
-                self.datadir / "tiny-imagenet" / "val" / "val_annotations.txt"
-            ) as ann_file:
-                image_name_to_annotation = dict(line.split()[:2] for line in ann_file)
-            self.image_data = [
-                (image_path, image_name_to_annotation[image_path.name])
-                for image_path in image_iter
-            ]
-        elif split == "test":
-            self.image_data = [(image_path, None) for image_path in image_iter]
-
-    def __getitem__(self, key: int) -> ImageNetItem:
-        image_path, wnid = self.image_data[key]
-        idx = self.wnid_to_idx[wnid] if wnid else None
-        return ImageNetItem(
-            self.transform(PIL.Image.open(image_path).convert("RGB")),
-            idx,
+        memory = joblib.Memory(datadir, verbose=0)
+        self.image_paths = memory.cache(find_files)(
+            self.datadir / self.name / "ILSVRC" / "Data" / "CLS-LOC" / self.split,
+            extension="JPEG",
         )
 
+        self.wnid_to_index = {}
+        self.wnid_to_name = {}
+        with open(self.datadir / self.name / "LOC_synset_mapping.txt") as mapping_file:
+            for index, line in enumerate(mapping_file):
+                wnid, _, name = line.strip().partition(" ")
+                self.wnid_to_index[wnid] = index
+                self.wnid_to_name[wnid] = name
+
+        self.image_transforms = lambda: None
+
+    @staticmethod
+    def to_ann_path(image_path: pathlib.Path) -> pathlib.Path:
+        """Only val images are guaranteed to have a relative ann file"""
+        parts = list(image_path.parts)
+        parts[parts.index("Data")] = "Annotations"
+        return pathlib.Path(*parts).with_suffix(".xml")
+
+    def get_wnid(self, image_path: pathlib.Path) -> str:
+        if self.split == "train":
+            return image_path.parent.name
+        elif self.split == "val":
+            ann_path = self.to_ann_path(image_path)
+            element = ElementTree.parse(ann_path).getroot().find("./object/name")
+            text = element.text if element is not None else ""
+            if text:
+                return text
+            else:
+                raise ValueError(f"wnid not found in {ann_path=}")
+        else:
+            raise ValueError("only train and test splits have targets")
+
+    def __getitem__(self, key: int) -> T:
+        image_path = pathlib.Path(str(self.image_paths[key]))
+        image = PIL.Image.open(image_path).convert("RGB")
+        if self.split == "test":
+            return tp.cast(T, image)
+        else:
+            wnid = self.get_wnid(image_path)
+            return tp.cast(T, ImageNetItem(image, wnid))
+
     def __len__(self) -> int:
-        return len(self.image_data)
+        return len(self.image_paths)
 
 
 class LitTinyImageNet(pl.LightningDataModule):
-    _val_ratio = 0.1
+    _val_ratio: tp.ClassVar[float] = 0.1
+
     datadir: str
     batch_size: int
 
