@@ -5,5 +5,6 @@ torchvision==0.13.1+cu116
 joblib==1.2.0
 numpy==1.23.3
 tqdm==4.64.1
+pytorch-lightning==1.7.7
 
 -e .

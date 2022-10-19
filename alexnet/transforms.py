@@ -1,3 +1,4 @@
+import typing as tp
 import torch
 from torchvision.transforms import (
     Compose,
@@ -13,6 +14,7 @@ from torchvision.transforms import (
 
 __all__ = [
     "Compose",
+    "CenterCrop",
     "RandomCrop",
     "RandomHorizontalFlip",
     "Resize",
@@ -44,3 +46,19 @@ class PCAAugment:
         # C
         delta: torch.Tensor = eigenvectors @ (alpha * eigenvalues)
         return torch.clamp(tensor + delta[:, None, None], 0, 1)
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}()"
+
+
+class Stack:
+    dim: int
+
+    def __init__(self, dim: int = 0) -> None:
+        self.dim = dim
+
+    def __call__(self, tensors: tp.List[torch.Tensor]) -> torch.Tensor:
+        return torch.stack(tensors, dim=self.dim)
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(dim={self.dim})"

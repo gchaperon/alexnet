@@ -4,3 +4,4 @@ mypy==0.981
 pre-commit==2.20.0
 
 jupyterlab
+types-Pillow==9.2.2.2

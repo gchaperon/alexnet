@@ -1,4 +1,3 @@
-import PIL.Image
 import xml.etree.ElementTree as ElementTree
 import joblib
 import tqdm
@@ -7,14 +6,18 @@ import typing as tp
 import PIL.Image
 import pytorch_lightning as pl
 import torch
-import torchvision.transforms as transforms
 import numpy as np
 import numpy.typing as npt
 
+from . import transforms
+
+_ImageT = tp.Union[torch.Tensor, PIL.Image.Image]
+_TransformT = tp.Callable[[PIL.Image.Image], _ImageT]
+
 
 class ImageNetItem(tp.NamedTuple):
-    image: torch.Tensor
-    cls: str
+    image: _ImageT
+    target: torch.Tensor
 
 
 def find_files(root_dir: pathlib.Path, extension: str) -> npt.NDArray[np.str_]:
@@ -29,10 +32,11 @@ def find_files(root_dir: pathlib.Path, extension: str) -> npt.NDArray[np.str_]:
     )
 
 
-T = tp.TypeVar("T")
+def _identity_transform(image: PIL.Image.Image) -> PIL.Image.Image:
+    return image
 
 
-class ImageNet(torch.utils.data.Dataset[T]):
+class ImageNet(torch.utils.data.Dataset[tp.Union[ImageNetItem, _ImageT]]):
     name = "imagenet"
     nclasses = 1000
 
@@ -41,28 +45,18 @@ class ImageNet(torch.utils.data.Dataset[T]):
     image_paths: npt.NDArray[np.str_]
     wnid_to_index: tp.Dict[str, int]
     wnid_to_name: tp.Dict[str, str]
-    image_transforms: tp.Callable[[PIL.Image.Image], torch.Tensor]
-
-    @tp.overload
-    def __init__(
-        self: "ImageNet[ImageNetItem]", datadir: str, split: tp.Literal["train", "val"]
-    ) -> None:
-        ...
-
-    @tp.overload
-    def __init__(
-        self: "ImageNet[torch.Tensor]", datadir: str, split: tp.Literal["test"]
-    ) -> None:
-        ...
+    image_transform: _TransformT
 
     def __init__(
         self,
         datadir: str,
         split: tp.Literal["train", "val", "test"],
+        transform: tp.Optional[_TransformT] = None,
     ) -> None:
         super().__init__()
         self.datadir = pathlib.Path(datadir)
         self.split = split
+        self.image_transform = transform or (lambda image: image)
 
         memory = joblib.Memory(datadir, verbose=0)
         self.image_paths = memory.cache(find_files)(
@@ -77,8 +71,6 @@ class ImageNet(torch.utils.data.Dataset[T]):
                 wnid, _, name = line.strip().partition(" ")
                 self.wnid_to_index[wnid] = index
                 self.wnid_to_name[wnid] = name
-
-        self.image_transforms = lambda: None
 
     @staticmethod
     def to_ann_path(image_path: pathlib.Path) -> pathlib.Path:
@@ -101,74 +93,140 @@ class ImageNet(torch.utils.data.Dataset[T]):
         else:
             raise ValueError("only train and test splits have targets")
 
-    def __getitem__(self, key: int) -> T:
+    def __getitem__(self, key: int) -> tp.Union[ImageNetItem, _ImageT]:
         image_path = pathlib.Path(str(self.image_paths[key]))
         image = PIL.Image.open(image_path).convert("RGB")
+        transformed = self.image_transform(image)
         if self.split == "test":
-            return tp.cast(T, image)
+            return transformed
         else:
             wnid = self.get_wnid(image_path)
-            return tp.cast(T, ImageNetItem(image, wnid))
+            target = torch.tensor(self.wnid_to_index[wnid])
+            return ImageNetItem(transformed, target)
 
     def __len__(self) -> int:
         return len(self.image_paths)
 
 
-class LitTinyImageNet(pl.LightningDataModule):
+_default_train_transform: tp.Callable[
+    [PIL.Image.Image], torch.Tensor
+] = transforms.Compose(
+    [
+        transforms.Resize(256),
+        transforms.CenterCrop(256),
+        transforms.RandomCrop(224),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.PCAAugment(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ]
+)
+
+_default_val_transform: tp.Callable[
+    [PIL.Image.Image], torch.Tensor
+] = transforms.Compose(
+    [
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ]
+)
+
+_default_test_transform: tp.Callable[
+    [PIL.Image.Image], torch.Tensor
+] = transforms.Compose(
+    [
+        transforms.Resize(256),
+        transforms.CenterCrop(256),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        transforms.TenCrop(224),
+        transforms.Stack(),
+    ]
+)
+
+
+# NOTE: types in {train, val, ...}_dataloader() methods are a mess and i'm
+# kinda tired so i'm just silencing them
+class LitImageNet(pl.LightningDataModule):
+    """ImageNet data module specifically for training AlexNet"""
+
     _val_ratio: tp.ClassVar[float] = 0.1
 
     datadir: str
     batch_size: int
+    train_transform: _TransformT
+    val_transform: _TransformT
+    test_transform: _TransformT
 
-    def __init__(self, datadir: str, batch_size: int) -> None:
+    def __init__(
+        self,
+        datadir: str,
+        batch_size: int,
+        train_transform: _TransformT = _default_train_transform,
+        val_transform: _TransformT = _default_val_transform,
+        test_transform: _TransformT = _default_test_transform,
+    ) -> None:
         super().__init__()
         self.save_hyperparameters(ignore=("datadir",))
 
         self.datadir = datadir
         self.batch_size = batch_size
+        self.train_transform = train_transform
+        self.val_transform = val_transform
+        self.test_transform = test_transform
 
     def setup(
         self, stage: tp.Optional[tp.Literal["fit", "validate", "test"]] = None
     ) -> None:
         if stage in ("fit", "validate", None):
-            full_train = TinyImageNet(self.datadir, split="train")
-            val_len = int(len(full_train) * self._val_ratio)
-            train_len = len(full_train) - val_len
-            self.train_dataset, self.val_dataset = torch.utils.data.random_split(
-                dataset=full_train, lengths=[train_len, val_len]
+            self.val_dataset = ImageNet(
+                self.datadir, split="val", transform=self.val_transform
+            )
+        if stage in ("fit", None):
+            self.train_dataset = ImageNet(
+                self.datadir, split="train", transform=self.train_transform
             )
         if stage in ("test", None):
-            self.test_dataset = TinyImageNet(self.datadir, split="val")
+            # NOTE: for test stage also use val dataset since actual test
+            # dataset doesn't have targets. However, use the actual test
+            # transform.
+            self.test_dataset = ImageNet(
+                self.datadir, split="val", transform=self.test_transform
+            )
         if stage in ("predict", None):
-            self.predict_dataset = TinyImageNet(self.datadir, split="test")
+            self.predict_dataset = ImageNet(
+                self.datadir, split="test", transform=self.test_transform
+            )
 
-    def train_dataloader(self) -> torch.utils.data.DataLoader:
+    def train_dataloader(self) -> torch.utils.data.DataLoader[ImageNetItem]:
         return torch.utils.data.DataLoader(
-            self.train_dataset,
+            self.train_dataset,  # type:ignore
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=4,
         )
 
-    def val_dataloader(self) -> torch.utils.data.DataLoader:
+    def val_dataloader(self) -> torch.utils.data.DataLoader[ImageNetItem]:
         return torch.utils.data.DataLoader(
-            self.val_dataset,
+            self.val_dataset,  # type:ignore
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=4,
         )
 
-    def test_dataloader(self) -> torch.utils.data.DataLoader:
+    def test_dataloader(self) -> torch.utils.data.DataLoader[ImageNetItem]:
         return torch.utils.data.DataLoader(
-            self.test_dataset,
+            self.test_dataset,  # type:ignore
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=4,
         )
 
-    def predict_dataloader(self) -> torch.utils.data.DataLoader:
+    def predict_dataloader(self) -> torch.utils.data.DataLoader[torch.Tensor]:
         return torch.utils.data.DataLoader(
-            self.predict_dataset,
+            self.predict_dataset,  # type:ignore
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=4,
