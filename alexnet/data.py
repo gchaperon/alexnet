@@ -181,6 +181,9 @@ class LitImageNet(pl.LightningDataModule):
         self, stage: tp.Optional[tp.Literal["fit", "validate", "test"]] = None
     ) -> None:
         if stage in ("fit", "validate", None):
+            # NOTE: for val stage use the val dataset but using a simpler
+            # transform, where the data is simply an image instead of
+            # classifying a ten crop and averaging.
             self.val_dataset = ImageNet(
                 self.datadir, split="val", transform=self.val_transform
             )
