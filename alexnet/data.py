@@ -1,3 +1,4 @@
+import os
 import xml.etree.ElementTree as ElementTree
 import joblib
 import tqdm
@@ -208,7 +209,7 @@ class LitImageNet(pl.LightningDataModule):
             self.train_dataset,  # type:ignore
             batch_size=self.batch_size,
             shuffle=True,
-            num_workers=4,
+            num_workers=min(os.cpu_count() or 0, 8),
         )
 
     def val_dataloader(self) -> torch.utils.data.DataLoader[ImageNetItem]:
@@ -216,7 +217,7 @@ class LitImageNet(pl.LightningDataModule):
             self.val_dataset,  # type:ignore
             batch_size=self.batch_size,
             shuffle=False,
-            num_workers=4,
+            num_workers=min(os.cpu_count() or 0, 8),
         )
 
     def test_dataloader(self) -> torch.utils.data.DataLoader[ImageNetItem]:
@@ -224,7 +225,7 @@ class LitImageNet(pl.LightningDataModule):
             self.test_dataset,  # type:ignore
             batch_size=self.batch_size,
             shuffle=False,
-            num_workers=4,
+            num_workers=min(os.cpu_count() or 0, 8),
         )
 
     def predict_dataloader(self) -> torch.utils.data.DataLoader[torch.Tensor]:
@@ -232,5 +233,5 @@ class LitImageNet(pl.LightningDataModule):
             self.predict_dataset,  # type:ignore
             batch_size=self.batch_size,
             shuffle=False,
-            num_workers=4,
+            num_workers=min(os.cpu_count() or 0, 8),
         )

@@ -1,3 +1,4 @@
+import numpy as np
 import typing as tp
 import torch
 from torchvision.transforms import (
@@ -38,9 +39,8 @@ class PCAAugment:
         # shape: C x C
         corr = torch.corrcoef(pixels)
         # C          C x C
-        eigenvalues, eigenvectors = torch.linalg.eig(corr)
-        assert torch.isreal(eigenvalues).all() and torch.isreal(eigenvectors).all()
-        eigenvalues, eigenvectors = torch.real(eigenvalues), torch.real(eigenvectors)
+        eigenvalues, eigenvectors = map(torch.from_numpy, np.linalg.eig(corr))
+        assert torch.isreal(eigenvalues).all() and torch.isreal(eigenvectors.all())
         # C
         alpha = 0.1 * torch.randn(3)
         # C

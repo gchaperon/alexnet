@@ -49,7 +49,7 @@ Instructions on how to configure `kaggle` are [here](https://github.com/Kaggle/k
 - [ ] dropout of 0.5
 - [ ] momentum 0.9
 - [ ] weight decay 0.0005
-- [ ] weight init is guassian with mean 0, std 0.01. Bias in 2, 4, 5 conv layers and also fc layers with constant 1, bias in other layers init with 0
+- [x] weight init is guassian with mean 0, std 0.01. Bias in 2, 4, 5 conv layers and also fc layers with constant 1, bias in other layers init with 0
 - [ ] same lr for al layers, start at 0.01
 - [ ] decay learn rate by factor of 10 when val error stops improving. This results in 3 reductions during training.
 - [ ] 90 epochs, which took 5/6 days.

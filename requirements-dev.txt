@@ -5,3 +5,4 @@ pre-commit==2.20.0
 
 jupyterlab
 types-Pillow==9.2.2.2
+matplotlib==3.6.1

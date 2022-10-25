@@ -2,6 +2,7 @@ import itertools
 import torch
 import torch.nn as nn
 import typing as tp
+import pytorch_lightning as pl
 
 
 class _Repeat(nn.Module):
@@ -118,3 +119,42 @@ class AlexNet(nn.Module):
             (m for m in self.classifier if isinstance(m, nn.Linear)),
         ):
             nn.init.constant_(module.bias, 1.0)
+
+
+class _OptimizerOpts(tp.TypedDict):
+    lr: float
+    momentum: float
+    weight_decay: float
+
+
+class LitAlexNet(AlexNet, pl.LightningModule):
+    optimizer_opts: _OptimizerOpts
+
+    def __init__(
+        self, nclasses: int, optimizer_opts: _OptimizerOpts, dropout: float = 0.0
+    ) -> None:
+        super().__init__(nclasses, dropout)
+        self.save_hyperparameters()
+
+        self.loss = nn.CrossEntropyLoss()
+        self.optimizer_opts = optimizer_opts
+
+    def training_step(
+        self, batch: tuple[torch.Tensor, torch.Tensor], batch_idx: int
+    ) -> torch.Tensor:
+        input, target = batch
+        logits = self(input)
+        loss: torch.Tensor = self.loss(logits, target)
+        self.log("train/loss", loss)
+        return loss
+
+    def validation_step(
+        self, batch: tuple[torch.Tensor, torch.Tensor], batch_idx: int
+    ) -> None:
+        input, target = batch
+        logits = self(input)
+        loss = self.loss(logits, target)
+        self.log("val/loss", loss)
+
+    def configure_optimizers(self) -> torch.optim.Optimizer:
+        return torch.optim.SGD(self.parameters(), **self.optimizer_opts)
