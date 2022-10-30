@@ -9,6 +9,7 @@ import pytorch_lightning as pl
 import torch
 import numpy as np
 import numpy.typing as npt
+import torchvision
 
 from . import transforms
 
@@ -109,100 +110,27 @@ class ImageNet(torch.utils.data.Dataset[tp.Union[ImageNetItem, _ImageT]]):
         return len(self.image_paths)
 
 
-_default_train_transform: tp.Callable[
-    [PIL.Image.Image], torch.Tensor
-] = transforms.Compose(
-    [
-        transforms.Resize(256),
-        transforms.CenterCrop(256),
-        transforms.RandomCrop(224),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.PCAAugment(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-    ]
-)
-
-_default_val_transform: tp.Callable[
-    [PIL.Image.Image], torch.Tensor
-] = transforms.Compose(
-    [
-        transforms.Resize(256),
-        transforms.CenterCrop(224),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-    ]
-)
-
-_default_test_transform: tp.Callable[
-    [PIL.Image.Image], torch.Tensor
-] = transforms.Compose(
-    [
-        transforms.Resize(256),
-        transforms.CenterCrop(256),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        transforms.TenCrop(224),
-        transforms.Stack(),
-    ]
-)
-
-
 # NOTE: types in {train, val, ...}_dataloader() methods are a mess and i'm
 # kinda tired so i'm just silencing them
-class LitImageNet(pl.LightningDataModule):
-    """ImageNet data module specifically for training AlexNet"""
-
-    _val_ratio: tp.ClassVar[float] = 0.1
+class _BaseDataModule(pl.LightningDataModule):
+    train_dataset: torch.utils.data.Dataset[ImageNetItem]
+    val_dataset: torch.utils.data.Dataset[ImageNetItem]
+    test_dataset: torch.utils.data.Dataset[ImageNetItem]
+    predict_dataset: torch.utils.data.Dataset[torch.Tensor]
 
     datadir: str
     batch_size: int
-    train_transform: _TransformT
-    val_transform: _TransformT
-    test_transform: _TransformT
 
     def __init__(
         self,
         datadir: str,
         batch_size: int,
-        train_transform: _TransformT = _default_train_transform,
-        val_transform: _TransformT = _default_val_transform,
-        test_transform: _TransformT = _default_test_transform,
     ) -> None:
         super().__init__()
         self.save_hyperparameters(ignore=("datadir",))
 
         self.datadir = datadir
         self.batch_size = batch_size
-        self.train_transform = train_transform
-        self.val_transform = val_transform
-        self.test_transform = test_transform
-
-    def setup(
-        self, stage: tp.Optional[tp.Literal["fit", "validate", "test"]] = None
-    ) -> None:
-        if stage in ("fit", "validate", None):
-            # NOTE: for val stage use the val dataset but using a simpler
-            # transform, where the data is simply an image instead of
-            # classifying a ten crop and averaging.
-            self.val_dataset = ImageNet(
-                self.datadir, split="val", transform=self.val_transform
-            )
-        if stage in ("fit", None):
-            self.train_dataset = ImageNet(
-                self.datadir, split="train", transform=self.train_transform
-            )
-        if stage in ("test", None):
-            # NOTE: for test stage also use val dataset since actual test
-            # dataset doesn't have targets. However, use the actual test
-            # transform.
-            self.test_dataset = ImageNet(
-                self.datadir, split="val", transform=self.test_transform
-            )
-        if stage in ("predict", None):
-            self.predict_dataset = ImageNet(
-                self.datadir, split="test", transform=self.test_transform
-            )
 
     def train_dataloader(self) -> torch.utils.data.DataLoader[ImageNetItem]:
         return torch.utils.data.DataLoader(
@@ -215,7 +143,7 @@ class LitImageNet(pl.LightningDataModule):
     def val_dataloader(self) -> torch.utils.data.DataLoader[ImageNetItem]:
         return torch.utils.data.DataLoader(
             self.val_dataset,  # type:ignore
-            batch_size=self.batch_size,
+            batch_size=2 * self.batch_size,
             shuffle=False,
             num_workers=min(os.cpu_count() or 0, 8),
         )
@@ -223,7 +151,7 @@ class LitImageNet(pl.LightningDataModule):
     def test_dataloader(self) -> torch.utils.data.DataLoader[ImageNetItem]:
         return torch.utils.data.DataLoader(
             self.test_dataset,  # type:ignore
-            batch_size=self.batch_size,
+            batch_size=2 * self.batch_size,
             shuffle=False,
             num_workers=min(os.cpu_count() or 0, 8),
         )
@@ -231,7 +159,295 @@ class LitImageNet(pl.LightningDataModule):
     def predict_dataloader(self) -> torch.utils.data.DataLoader[torch.Tensor]:
         return torch.utils.data.DataLoader(
             self.predict_dataset,  # type:ignore
-            batch_size=self.batch_size,
+            batch_size=2 * self.batch_size,
             shuffle=False,
             num_workers=min(os.cpu_count() or 0, 8),
         )
+
+
+class LitImageNet(_BaseDataModule):
+    """ImageNet data module specifically for training AlexNet.
+    Data should already been downloaded, it requires signing a user agreement."""
+
+    nclasses: int = 1000
+    _val_ratio: tp.ClassVar[float] = 0.1
+
+    def setup(
+        self, stage: tp.Optional[tp.Literal["fit", "validate", "test"]] = None
+    ) -> None:
+        if stage in ("fit", "validate", None):
+            # NOTE: for val stage use the val dataset but using a simpler
+            # transform, where the data is simply an image instead of
+            # classifying a ten crop and averaging.
+            self.val_dataset = ImageNet(
+                self.datadir,
+                split="val",
+                transform=transforms.Compose(
+                    [
+                        transforms.Resize(256),
+                        transforms.CenterCrop(224),
+                        transforms.ToTensor(),
+                        transforms.Normalize(
+                            mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+                        ),
+                    ]
+                ),
+            )
+        if stage in ("fit", None):
+            self.train_dataset = ImageNet(
+                self.datadir,
+                split="train",
+                transform=transforms.Compose(
+                    [
+                        transforms.Resize(256),
+                        transforms.CenterCrop(256),
+                        transforms.RandomCrop(224),
+                        transforms.RandomHorizontalFlip(),
+                        transforms.ToTensor(),
+                        transforms.PCAAugment(),
+                        transforms.Normalize(
+                            mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+                        ),
+                    ]
+                ),
+            )
+        if stage in ("test", None):
+            # NOTE: for test stage I also use val dataset since actual test
+            # dataset doesn't have targets. However, use the actual test
+            # transform.
+            self.test_dataset = ImageNet(
+                self.datadir,
+                split="val",
+                transform=transforms.Compose(
+                    [
+                        transforms.Resize(256),
+                        transforms.CenterCrop(256),
+                        transforms.ToTensor(),
+                        transforms.Normalize(
+                            mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+                        ),
+                        transforms.TenCrop(224),
+                        transforms.Stack(),
+                    ]
+                ),
+            )
+        if stage in ("predict", None):
+            self.predict_dataset = ImageNet(
+                self.datadir,
+                split="test",
+                transform=transforms.Compose(
+                    [
+                        transforms.Resize(256),
+                        transforms.CenterCrop(256),
+                        transforms.ToTensor(),
+                        transforms.Normalize(
+                            mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+                        ),
+                        transforms.TenCrop(224),
+                        transforms.Stack(),
+                    ]
+                ),
+            )
+
+
+class LitMNIST(_BaseDataModule):
+    nclasses: tp.ClassVar[int] = 10
+    dataset_cls = torchvision.datasets.MNIST
+    _nval: tp.ClassVar[int] = 3000  # total train examples is 60k
+    _normalize_args = dict(mean=[0.1307] * 3, std=[0.3081] * 3)
+
+    def prepare_data(self) -> None:
+        self.dataset_cls(self.datadir, train=True, download=True)
+        self.dataset_cls(self.datadir, train=False, download=True)
+
+    def setup(
+        self, stage: tp.Optional[tp.Literal["fit", "validate", "test"]] = None
+    ) -> None:
+        if stage in ("fit", "validate", None):
+            full_train = self.dataset_cls(self.datadir, train=True)
+            nexamples = len(full_train)
+            indices = torch.randperm(nexamples).tolist()
+
+            self.val_dataset = torch.utils.data.Subset(
+                self.dataset_cls(
+                    self.datadir,
+                    train=True,
+                    transform=transforms.Compose(
+                        [
+                            transforms.ToRGB(),
+                            transforms.Resize(224),
+                            transforms.ToTensor(),
+                            transforms.Normalize(**self._normalize_args),
+                        ]
+                    ),
+                ),
+                indices=indices[: self._nval],
+            )
+            self.train_dataset = torch.utils.data.Subset(
+                self.dataset_cls(
+                    self.datadir,
+                    train=True,
+                    transform=transforms.Compose(
+                        [
+                            transforms.ToRGB(),
+                            transforms.Resize(256),
+                            transforms.RandomCrop(224),
+                            transforms.ToTensor(),
+                            transforms.Normalize(**self._normalize_args),
+                        ]
+                    ),
+                ),
+                indices=indices[self._nval :],
+            )
+
+        if stage in ("test", None):
+            self.test_dataset = self.dataset_cls(
+                self.datadir,
+                train=False,
+                transform=transforms.Compose(
+                    [
+                        transforms.ToRGB(),
+                        transforms.Resize(224),
+                        transforms.ToTensor(),
+                        transforms.Normalize(**self._normalize_args),
+                    ]
+                ),
+            )
+
+
+class LitFashionMNIST(_BaseDataModule):
+    nclasses: tp.ClassVar[int] = 10
+    dataset_cls = torchvision.datasets.FashionMNIST
+    _nval = 3000  # total train examples is 60k
+    _normalize_args = dict(mean=[0.286] * 3, std=[0.353] * 3)
+
+    def prepare_data(self) -> None:
+        self.dataset_cls(self.datadir, train=True, download=True)
+        self.dataset_cls(self.datadir, train=False, download=True)
+
+    def setup(
+        self, stage: tp.Optional[tp.Literal["fit", "validate", "test"]] = None
+    ) -> None:
+        if stage in ("fit", "validate", None):
+            full_train = self.dataset_cls(self.datadir, train=True)
+            nexamples = len(full_train)
+            indices = torch.randperm(nexamples).tolist()
+
+            self.val_dataset = torch.utils.data.Subset(
+                self.dataset_cls(
+                    self.datadir,
+                    train=True,
+                    transform=transforms.Compose(
+                        [
+                            transforms.ToRGB(),
+                            transforms.Resize(224),
+                            transforms.ToTensor(),
+                            transforms.Normalize(**self._normalize_args),
+                        ]
+                    ),
+                ),
+                indices=indices[: self._nval],
+            )
+            self.train_dataset = torch.utils.data.Subset(
+                self.dataset_cls(
+                    self.datadir,
+                    train=True,
+                    transform=transforms.Compose(
+                        [
+                            transforms.ToRGB(),
+                            transforms.Resize(256),
+                            transforms.RandomCrop(224),
+                            transforms.RandomHorizontalFlip(),
+                            transforms.ToTensor(),
+                            transforms.Normalize(**self._normalize_args),
+                        ]
+                    ),
+                ),
+                indices=indices[self._nval :],
+            )
+
+        if stage in ("test", None):
+            self.test_dataset = self.dataset_cls(
+                self.datadir,
+                train=False,
+                transform=transforms.Compose(
+                    [
+                        transforms.ToRGB(),
+                        transforms.Resize(224),
+                        transforms.ToTensor(),
+                        transforms.Normalize(**self._normalize_args),
+                    ]
+                ),
+            )
+
+
+class LitCIFAR10(_BaseDataModule):
+    nclasses: tp.ClassVar[int] = 10
+    _nval: tp.ClassVar[int] = 2000  # total train examples is 50k
+    _normalize_args = dict(mean=[0.4914, 0.4822, 0.4465], std=[0.247, 0.243, 0.261])
+    dataset_cls: tp.ClassVar[
+        tp.Type[torchvision.datasets.CIFAR10]
+    ] = torchvision.datasets.CIFAR10
+
+    def prepare_data(self) -> None:
+        self.dataset_cls(self.datadir, train=True, download=True)
+        self.dataset_cls(self.datadir, train=False, download=True)
+
+    def setup(
+        self, stage: tp.Optional[tp.Literal["fit", "validate", "test"]] = None
+    ) -> None:
+        if stage in ("fit", "validate", None):
+            full_train = self.dataset_cls(self.datadir, train=True)
+            nexamples = len(full_train)
+            indices = torch.randperm(nexamples).tolist()
+            # instantiate again because I want different transforms
+            self.val_dataset = torch.utils.data.Subset(
+                self.dataset_cls(
+                    self.datadir,
+                    train=True,
+                    transform=transforms.Compose(
+                        [
+                            transforms.Resize(224),
+                            transforms.ToTensor(),
+                            transforms.Normalize(**self._normalize_args),
+                        ]
+                    ),
+                ),
+                indices=indices[: self._nval],
+            )
+            self.train_dataset = torch.utils.data.Subset(
+                self.dataset_cls(
+                    self.datadir,
+                    train=True,
+                    transform=transforms.Compose(
+                        [
+                            transforms.Resize(256),
+                            transforms.RandomCrop(224),
+                            transforms.RandomHorizontalFlip(),
+                            transforms.ToTensor(),
+                            transforms.PCAAugment(),
+                            transforms.Normalize(**self._normalize_args),
+                        ]
+                    ),
+                ),
+                indices=indices[self._nval :],
+            )
+        if stage in ("test", None):
+            self.test_dataset = self.dataset_cls(
+                self.datadir,
+                train=False,
+                transform=transforms.Compose(
+                    [
+                        transforms.Resize(224),
+                        transforms.ToTensor(),
+                        transforms.Normalize(**self._normalize_args),
+                    ]
+                ),
+            )
+
+
+class LitCIFAR100(LitCIFAR10):
+    nclasses: tp.ClassVar[int] = 100
+    _nval: tp.ClassVar[int] = 2000  # total train examples is 50k
+    dataset_cls = torchvision.datasets.CIFAR100
+    _normalize_args = dict(mean=[0.5071, 0.4867, 0.4408], std=[0.2675, 0.2565, 0.2761])

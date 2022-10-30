@@ -1,9 +1,11 @@
 import numpy as np
 import typing as tp
+import PIL.Image
 import torch
 from torchvision.transforms import (
     Compose,
     CenterCrop,
+    Lambda,
     RandomCrop,
     RandomHorizontalFlip,
     Resize,
@@ -16,6 +18,7 @@ from torchvision.transforms import (
 __all__ = [
     "Compose",
     "CenterCrop",
+    "Lambda",
     "RandomCrop",
     "RandomHorizontalFlip",
     "Resize",
@@ -24,6 +27,7 @@ __all__ = [
     "ToPILImage",
     "Normalize",
     "PCAAugment",
+    "ToRGB",
 ]
 
 
@@ -32,20 +36,36 @@ class PCAAugment:
         # tensor shape: C x H x W
         assert (tensor >= 0).all() and (tensor <= 1).all()
         assert isinstance(tensor, torch.Tensor), "PCAAugment applies only to tensors"
-        nchannels = tensor.shape[0]
-        pixels = tensor.view(nchannels, -1)
+        array = tensor.numpy()
+        nchannels = array.shape[0]
+        pixels = array.reshape(nchannels, -1)
         # substracting mean is the first step to PCA
-        pixels = pixels - torch.mean(pixels, dim=1, keepdim=True)
+        pixels = pixels - np.mean(pixels, axis=1, keepdims=True)
         # shape: C x C
-        corr = torch.corrcoef(pixels)
-        # C          C x C
-        eigenvalues, eigenvectors = map(torch.from_numpy, np.linalg.eig(corr))
-        assert torch.isreal(eigenvalues).all() and torch.isreal(eigenvectors.all())
-        # C
-        alpha = 0.1 * torch.randn(3)
-        # C
-        delta: torch.Tensor = eigenvectors @ (alpha * eigenvalues)
-        return torch.clamp(tensor + delta[:, None, None], 0, 1)
+        corr = np.corrcoef(pixels)
+        try:
+            # C          C x C
+            eigenvalues, eigenvectors = np.linalg.eig(corr)
+            assert np.isrealobj(eigenvalues) and np.isrealobj(eigenvectors)
+            # C
+            alpha = 0.1 * np.random.randn(nchannels)
+            # C
+            delta = eigenvectors @ (alpha * eigenvalues)
+        except np.linalg.LinAlgError:
+            # C
+            delta = np.zeros(nchannels)
+
+        return torch.from_numpy(
+            np.clip(array + delta[:, None, None], 0.0, 1.0).astype(np.float32)
+        )
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}()"
+
+
+class ToRGB:
+    def __call__(self, img: PIL.Image.Image) -> PIL.Image.Image:
+        return img.convert("RGB")
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}()"

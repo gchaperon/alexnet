@@ -54,3 +54,7 @@ Instructions on how to configure `kaggle` are [here](https://github.com/Kaggle/k
 - [ ] decay learn rate by factor of 10 when val error stops improving. This results in 3 reductions during training.
 - [ ] 90 epochs, which took 5/6 days.
 
+
+## Modifications
+
+* Optimizer changed, [other user](https://github.com/dansuh17/alexnet-pytorch/blob/8aeaedd79a462b79d5d483d6774e344ca1738570/model.py#L142) also saw poor performance using `optim.SGD`.

@@ -1,3 +1,5 @@
+import torch.nn.functional as F
+import torchmetrics
 import itertools
 import torch
 import torch.nn as nn
@@ -136,15 +138,22 @@ class LitAlexNet(AlexNet, pl.LightningModule):
         super().__init__(nclasses, dropout)
         self.save_hyperparameters()
 
-        self.loss = nn.CrossEntropyLoss()
         self.optimizer_opts = optimizer_opts
+
+        self.val_metrics = torchmetrics.MetricCollection(
+            {
+                "error@1": 1 - torchmetrics.Accuracy(top_k=1),
+                "error@5": 1 - torchmetrics.Accuracy(top_k=5),
+            },
+            prefix="val/",
+        )
 
     def training_step(
         self, batch: tuple[torch.Tensor, torch.Tensor], batch_idx: int
     ) -> torch.Tensor:
         input, target = batch
         logits = self(input)
-        loss: torch.Tensor = self.loss(logits, target)
+        loss: torch.Tensor = F.cross_entropy(logits, target)
         self.log("train/loss", loss)
         return loss
 
@@ -153,8 +162,27 @@ class LitAlexNet(AlexNet, pl.LightningModule):
     ) -> None:
         input, target = batch
         logits = self(input)
-        loss = self.loss(logits, target)
-        self.log("val/loss", loss)
+        loss = F.cross_entropy(logits, target)
+        self.log_dict(
+            {
+                "val/loss": loss,
+                **self.val_metrics(logits, target),
+            }
+        )
 
-    def configure_optimizers(self) -> torch.optim.Optimizer:
-        return torch.optim.SGD(self.parameters(), **self.optimizer_opts)
+    def configure_optimizers(self) -> dict[str, tp.Any]:
+        optimizer = torch.optim.Adam(self.parameters(), **self.optimizer_opts)
+        return dict(
+            optimizer=optimizer,
+            lr_scheduler=dict(
+                scheduler=torch.optim.lr_scheduler.ReduceLROnPlateau(
+                    optimizer,
+                    mode="min",
+                    factor=0.1,
+                    patience=3,
+                    min_lr=self.optimizer_opts["lr"] * 0.1**3,
+                ),
+                interval="epoch",
+                monitor="val/error@1",
+            ),
+        )
