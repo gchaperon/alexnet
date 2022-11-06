@@ -34,10 +34,6 @@ def find_files(root_dir: pathlib.Path, extension: str) -> npt.NDArray[np.str_]:
     )
 
 
-def _identity_transform(image: PIL.Image.Image) -> PIL.Image.Image:
-    return image
-
-
 class ImageNet(torch.utils.data.Dataset[tp.Union[ImageNetItem, _ImageT]]):
     name = "imagenet"
     nclasses = 1000
@@ -105,6 +101,63 @@ class ImageNet(torch.utils.data.Dataset[tp.Union[ImageNetItem, _ImageT]]):
             wnid = self.get_wnid(image_path)
             target = torch.tensor(self.wnid_to_index[wnid])
             return ImageNetItem(transformed, target)
+
+    def __len__(self) -> int:
+        return len(self.image_paths)
+
+
+class TinyImageNet(torch.utils.data.Dataset[ImageNetItem]):
+    name = "tiny-imagenet-200"
+    val_annotations: tp.Optional[dict[str, str]]
+
+    def __init__(
+        self,
+        datadir: str,
+        split: tp.Literal["train", "val"],
+        transform: tp.Optional[_TransformT] = None,
+    ) -> None:
+        super().__init__()
+        self.datadir = pathlib.Path(datadir)
+        self.split = split
+        self.image_transform = transform or (lambda image: image)
+
+        memory = joblib.Memory(datadir, verbose=0)
+        self.image_paths = memory.cache(find_files)(
+            self.datadir / self.name / self.split,
+            extension="JPEG",
+        )
+        with open(self.datadir / self.name / "wnids.txt") as wnids_file:
+            self.wnid_to_index = {line.strip(): i for i, line in enumerate(wnids_file)}
+
+        self.wnid_to_name = {}
+        with open(self.datadir / self.name / "words.txt") as names_file:
+            for line in names_file:
+                wnid, name = line.strip().split("\t")
+                self.wnid_to_name[wnid] = name
+
+        self.val_annotations = {}
+        if self.split == "val":
+            with open(
+                self.datadir / self.name / "val" / "val_annotations.txt"
+            ) as val_ann_file:
+                for line in val_ann_file:
+                    img_name, ann, *_ = line.split("\t")
+                    self.val_annotations[img_name] = ann
+
+    def _get_wnid(self, image_path: pathlib.Path) -> str:
+        if self.split == "val":
+            assert self.val_annotations is not None
+            return self.val_annotations[image_path.name]
+        elif self.split == "train":
+            return image_path.parts[-3]
+
+    def __getitem__(self, key: int) -> ImageNetItem:
+        image_path = pathlib.Path(str(self.image_paths[key]))
+        image = PIL.Image.open(image_path).convert("RGB")
+        transformed = self.image_transform(image)
+        wnid = self._get_wnid(image_path)
+        target = self.wnid_to_index[wnid]
+        return ImageNetItem(transformed, torch.tensor(target))
 
     def __len__(self) -> int:
         return len(self.image_paths)
@@ -451,3 +504,61 @@ class LitCIFAR100(LitCIFAR10):
     _nval: tp.ClassVar[int] = 2000  # total train examples is 50k
     dataset_cls = torchvision.datasets.CIFAR100
     _normalize_args = dict(mean=[0.5071, 0.4867, 0.4408], std=[0.2675, 0.2565, 0.2761])
+
+
+class LitTinyImageNet(_BaseDataModule):
+    nclasses = 200
+    _nval = 5000  # train dset len is 100k
+    _normalize_args = dict(mean=[0.4802, 0.4481, 0.3975], std=[0.2764, 0.2689, 0.2816])
+
+    def setup(
+        self, stage: tp.Optional[tp.Literal["fit", "validate", "test"]] = None
+    ) -> None:
+        if stage in ("fit", "validate", None):
+            full_train = TinyImageNet(self.datadir, split="train")
+            nexamples = len(full_train)
+            indices = torch.randperm(nexamples).tolist()
+
+            self.val_dataset = torch.utils.data.Subset(
+                TinyImageNet(
+                    self.datadir,
+                    split="train",
+                    transform=transforms.Compose(
+                        [
+                            transforms.Resize(224),
+                            transforms.ToTensor(),
+                            transforms.Normalize(**self._normalize_args),
+                        ]
+                    ),
+                ),
+                indices=indices[: self._nval],
+            )
+            self.train_dataset = torch.utils.data.Subset(
+                TinyImageNet(
+                    self.datadir,
+                    split="train",
+                    transform=transforms.Compose(
+                        [
+                            transforms.Resize(256),
+                            transforms.RandomCrop(224),
+                            transforms.RandomHorizontalFlip(),
+                            transforms.ToTensor(),
+                            transforms.PCAAugment(),
+                            transforms.Normalize(**self._normalize_args),
+                        ]
+                    ),
+                ),
+                indices=indices[self._nval :],
+            )
+        if stage in ("test", None):
+            self.test_dataset = TinyImageNet(
+                self.datadir,
+                split="val",
+                transform=transforms.Compose(
+                    [
+                        transforms.Resize(224),
+                        transforms.ToTensor(),
+                        transforms.Normalize(**self._normalize_args),
+                    ]
+                ),
+            )

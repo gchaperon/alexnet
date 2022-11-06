@@ -5,7 +5,7 @@ My replication code for the [AlexNet paper](https://papers.nips.cc/paper/2012/ha
 ## Data
 The data used is ImageNet 2012. I downloaded it from kaggle.  The paper also
 experiments with ImageNet 2010 but I couldn't find this dataset.  The authors
-also experiment with pretrainind on ImageNet Fall 2011 which isn't even
+also experiment with pretraining on ImageNet Fall 2011 which isn't even
 available anymore. The closest would be current ImageNet21K, but I don't have
 enough compute for that.
 
@@ -17,6 +17,15 @@ unzip imagenet-object-localization-challenge.zip
 
 Instructions on how to configure `kaggle` are [here](https://github.com/Kaggle/kaggle-api)
 
+Also, if you want to train on tiny-imagenet you will have to download the data.
+Then, pass `--task=tiny-imagenet` to the training script.
+
+```console
+mkdir -p data && cd data
+wget https://image-net.org/data/tiny-imagenet-200.zip
+unzip tiny-imagenet-200.zip
+cd ..
+```
 
 ## Summary of features / techniques used in the paper
 
@@ -30,12 +39,11 @@ Instructions on how to configure `kaggle` are [here](https://github.com/Kaggle/k
   behaviour
 - [x] local response norm, pytorch implementation divides alpha by n, so in
   order to replicate paper alpha should be multiplied by n
-- [x] precise net description taken from
-  https://github.com/akrizhevsky/cuda-convnet2/blob/master/layers/layers-imagenet-2gpu-model.cfg
+- [x] net description taken from section 3.5 and figure 2
 - [x] augmentation: at train time, extract random 224 x 224 patches and
   horizontal reflection
-- [x] augmentation: at test time, extract 5 224 x 224 patches (corners +
-  center) + h reflections, results in averaged prediction over the 10 patches
+- [ ] augmentation: at test time, extract 10 224 x 224 patches (corners +
+  center) + h reflections, results is averaged prediction over the 10 patches
 - [x] augmentation: PCA color augmentation, see paper section 4.1, extra resources:
 	* https://github.com/koshian2/PCAColorAugmentation
 	* https://github.com/aparico/pca-color-augment
@@ -44,17 +52,22 @@ Instructions on how to configure `kaggle` are [here](https://github.com/Kaggle/k
 
 ## Training details
 
-- [ ] optim SGD, see exact update rule in paper section 5 (possibly should implement myself)
-- [ ] batch size 128
-- [ ] dropout of 0.5
-- [ ] momentum 0.9
-- [ ] weight decay 0.0005
+- [ ] optim SGD, see exact update rule in paper section 5 (not used see, notes below)
+- [x] batch size 128
+- [x] dropout of 0.5
+- [ ] momentum 0.9 (see notes about optimization below)
+- [ ] weight decay 0.0005 (see notes about optimzation below)
 - [x] weight init is guassian with mean 0, std 0.01. Bias in 2, 4, 5 conv layers and also fc layers with constant 1, bias in other layers init with 0
-- [ ] same lr for al layers, start at 0.01
-- [ ] decay learn rate by factor of 10 when val error stops improving. This results in 3 reductions during training.
-- [ ] 90 epochs, which took 5/6 days.
+- [ ] same lr for al layers, start at 0.01 (somewhat, see notes)
+- [x] decay learn rate by factor of 10 when val error stops improving. This results in 3 reductions during training.
+- [x] 90 epochs, which took 5/6 days.
 
+## Notes
 
-## Modifications
+* Optimizer changed, [other
+  user](https://github.com/dansuh17/alexnet-pytorch/blob/8aeaedd79a462b79d5d483d6774e344ca1738570/model.py#L142)
+  also saw poor performance using `optim.SGD`. I even implemented the actual
+  optimizer step described in the paper, since it's a little bit different that
+  pytorch's algortihm, but saw no improvemente. I kept Adam optim and used the
+  "standard" learn rate for adam 1e-3, but still lowered it on plateau.
 
-* Optimizer changed, [other user](https://github.com/dansuh17/alexnet-pytorch/blob/8aeaedd79a462b79d5d483d6774e344ca1738570/model.py#L142) also saw poor performance using `optim.SGD`.

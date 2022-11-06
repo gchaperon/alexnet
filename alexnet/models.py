@@ -6,6 +6,8 @@ import torch.nn as nn
 import typing as tp
 import pytorch_lightning as pl
 
+# import alexnet.optim as optim
+
 
 class _Repeat(nn.Module):
     repeat_args: tp.Sequence[int]
@@ -29,15 +31,11 @@ class AlexNet(nn.Module):
 
         self.nclasses = nclasses
         self.dropout = dropout
-        # comments refer to the names in
+
+        # NOTE: model parallel training is emulated by the `groups` option in
+        # `nn.Conv2d`.
+        # Some dimensions and layer arguments are taken from
         # https://github.com/akrizhevsky/cuda-convnet2/blob/master/layers/layers-imagenet-2gpu-model.cfg
-        # I took the hparams from there because I found that was the net
-        # closest to the one described in the paper
-
-        # NOTE: model parallel is emulated by the `groups` option in `nn.Conv2d`.
-        # therefore naming becomes (conv1a, conv1b) -> conv1
-        # also, remember to repeat the input where necessary to emulate multi gpu
-
         groups = 2
         self.features = nn.Sequential(
             _Repeat(1, 2, 1, 1),
@@ -49,9 +47,9 @@ class AlexNet(nn.Module):
                 padding=0,
                 groups=groups,
             ),
+            nn.ReLU(),
             nn.LocalResponseNorm(size=5, alpha=5 * 10e-4, beta=0.75, k=2),
             nn.MaxPool2d(kernel_size=3, stride=2),
-            nn.ReLU(),
             nn.Conv2d(
                 in_channels=48 * groups,
                 out_channels=128 * groups,
@@ -88,8 +86,8 @@ class AlexNet(nn.Module):
                 padding=1,
                 groups=groups,
             ),
-            nn.MaxPool2d(kernel_size=3, stride=2),
             nn.ReLU(),
+            nn.MaxPool2d(kernel_size=3, stride=2),
         )
         self.classifier = nn.Sequential(
             nn.Linear(256 * 5 * 5, 4096),
@@ -100,7 +98,7 @@ class AlexNet(nn.Module):
             nn.Dropout(dropout),
             nn.Linear(4096, nclasses),
         )
-        self.reset_parameters()
+        # self.reset_parameters()
 
     def forward(self, input: torch.Tensor) -> torch.Tensor:
         features = self.features(input)
@@ -108,19 +106,19 @@ class AlexNet(nn.Module):
         logits: torch.Tensor = self.classifier(flattened)
         return logits
 
-    def reset_parameters(self) -> None:
-        for name, parameter in self.named_parameters():
-            if "weight" in name:
-                nn.init.normal_(parameter, mean=0.0, std=0.01)
-            elif "bias" in name:
-                nn.init.constant_(parameter, 0.0)
+    # def reset_parameters(self) -> None:
+    #     for name, parameter in self.named_parameters():
+    #         if "weight" in name:
+    #             nn.init.normal_(parameter, mean=0.0, std=0.01)
+    #         elif "bias" in name:
+    #             nn.init.constant_(parameter, 0.0)
 
-        # special cases where bias is initialized with 1
-        for module in itertools.chain(
-            (self.features[i] for i in (5, 11, 13)),
-            (m for m in self.classifier if isinstance(m, nn.Linear)),
-        ):
-            nn.init.constant_(module.bias, 1.0)
+    #     # special cases where bias is initialized with 1
+    #     for module in itertools.chain(
+    #         (self.features[i] for i in (5, 11, 13)),
+    #         (m for m in self.classifier if isinstance(m, nn.Linear)),
+    #     ):
+    #         nn.init.constant_(module.bias, 1.0)
 
 
 class _OptimizerOpts(tp.TypedDict):
@@ -142,8 +140,8 @@ class LitAlexNet(AlexNet, pl.LightningModule):
 
         self.val_metrics = torchmetrics.MetricCollection(
             {
-                "error@1": 1 - torchmetrics.Accuracy(top_k=1),
-                "error@5": 1 - torchmetrics.Accuracy(top_k=5),
+                "error@1": 1 - torchmetrics.Accuracy(top_k=1),  # type:ignore[operator]
+                "error@5": 1 - torchmetrics.Accuracy(top_k=5),  # type:ignore[operator]
             },
             prefix="val/",
         )
@@ -171,7 +169,7 @@ class LitAlexNet(AlexNet, pl.LightningModule):
         )
 
     def configure_optimizers(self) -> dict[str, tp.Any]:
-        optimizer = torch.optim.Adam(self.parameters(), **self.optimizer_opts)
+        optimizer = torch.optim.SGD(self.parameters(), **self.optimizer_opts)
         return dict(
             optimizer=optimizer,
             lr_scheduler=dict(

@@ -6,29 +6,38 @@ import alexnet.models as models
 import alexnet.data as data
 
 
-_task_dispatch = {
-    "mnist": data.LitMNIST,
-    "fashionmnist": data.LitFashionMNIST,
-    "cifar10": data.LitCIFAR10,
-    "cifar100": data.LitCIFAR100,
-}
+# Kinda ugly, but DRY is more important I guess
+_TaskT = tp.Literal["mnist", "fashion-mnist", "cifar10", "cifar100", "tiny-imagenet"]
+_task_dispatch = dict(
+    zip(
+        tp.get_args(_TaskT),
+        [
+            data.LitMNIST,
+            data.LitFashionMNIST,
+            data.LitCIFAR10,
+            data.LitCIFAR100,
+            data.LitTinyImageNet,
+        ],
+    )
+)
 
 
 @click.command()
 @click.option("--batch-size", default=128)
 @click.option("--dropout", default=0.5)
-@click.option("--task", type=click.Choice(list(_task_dispatch.keys())), required=True)
+@click.option("--task", type=click.Choice(tp.get_args(_TaskT)), required=True)
 def cli(
     batch_size: int,
     dropout: float,
-    task: tp.Literal["mnist", "fashionmnist", "cifar10", "cifar100"],
+    task: _TaskT,
 ) -> None:
+    print(f"train called with args {locals()}")
     pl.seed_everything(42, workers=True)
     datamodule_cls = _task_dispatch[task]
     model = models.LitAlexNet(
         nclasses=datamodule_cls.nclasses,
-        # optimizer_opts=dict(lr=0.01, momentum=0.9, weight_decay=0.0005),
-        optimizer_opts=dict(lr=0.0001),
+        optimizer_opts=dict(lr=0.01, momentum=0.9, weight_decay=0.0005),
+        # optimizer_opts=dict(lr=0.0001),
         dropout=dropout,
     )
     # print(model)
@@ -54,3 +63,4 @@ def cli(
         val_check_interval=1 / 4,
     )
     trainer.fit(model, datamodule)
+    # trainer.test(model, datamodule)
