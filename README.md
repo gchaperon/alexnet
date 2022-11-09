@@ -1,6 +1,7 @@
 # alexnet
 My replication code for the [AlexNet paper](https://papers.nips.cc/paper/2012/hash/c399862d3b9d6b76c8436e924a68c45b-Abstract.html). 
 
+tldr: go to (Results)[#results]
 
 ## Data
 The data used is ImageNet 2012. I downloaded it from kaggle.  The paper also
@@ -9,6 +10,7 @@ also experiment with pretraining on ImageNet Fall 2011 which isn't even
 available anymore. The closest would be current ImageNet21K, but I don't have
 enough compute for that.
 
+Download and extract ImangeNet
 ```console
 mkdir -p data/imagenet && cd data/imagenet
 kaggle competitions download -c imagenet-object-localization-challenge
@@ -17,15 +19,51 @@ unzip imagenet-object-localization-challenge.zip
 
 Instructions on how to configure `kaggle` are [here](https://github.com/Kaggle/kaggle-api)
 
-Also, if you want to train on tiny-imagenet you will have to download the data.
-Then, pass `--task=tiny-imagenet` to the training script.
-
+Also, if you want to train on tiny-imagenet download the data as follows.
 ```console
 mkdir -p data && cd data
 wget https://image-net.org/data/tiny-imagenet-200.zip
 unzip tiny-imagenet-200.zip
 cd ..
 ```
+
+I coded a couple more tasks, but those are downloaded automatically.
+
+## User guide
+Install the deps found in `requirements.txt`. I used python 3.9 and pytorch
+1.12. You should modify the cuda version according to your hardware.
+
+These are the command line options
+```console
+$ python -m alexnet --help
+Usage: python -m alexnet [OPTIONS]
+
+Options:
+  --task [mnist|fashion-mnist|cifar10|cifar100|tiny-imagenet|imagenet]
+                                  [required]
+  --batch-size INTEGER            [default: 128]
+  --dropout FLOAT                 [default: 0.5]
+  --learn-rate FLOAT              [default: 0.0001]
+  --seed INTEGER                  [default: 12331]
+  --extra-logging                 Whether to log histograms of parameters and
+                                  grads.
+  --fast-dev-run                  Run only a couple of steps, to check if
+                                  everything is working properly.
+  --help                          Show this message and exit.
+```
+
+The available tasks can be seen above. Default hparams where chosen according
+to the paper and my own experimentation. To run a setup pretty close to the one
+on the paper simply run
+
+```console
+python -m alexnet --task imagenet
+```
+
+## Results
+
+WIP: currently training, takes around 4 days on an RTX3090, i think my code is (disk)io bound
+
 
 ## Summary of features / techniques used in the paper
 
@@ -42,7 +80,7 @@ cd ..
 - [x] net description taken from section 3.5 and figure 2
 - [x] augmentation: at train time, extract random 224 x 224 patches and
   horizontal reflection
-- [ ] augmentation: at test time, extract 10 224 x 224 patches (corners +
+- [x] augmentation: at test time, extract 10 224 x 224 patches (corners +
   center) + h reflections, results is averaged prediction over the 10 patches
 - [x] augmentation: PCA color augmentation, see paper section 4.1, extra resources:
 	* https://github.com/koshian2/PCAColorAugmentation
@@ -70,4 +108,6 @@ cd ..
   optimizer step described in the paper, since it's a little bit different than
   pytorch's algortihm, but I saw no improvement. I kept Adam optim and used a
   learn rate of 1e-4, and also lowered it on plateau.
-
+* Apparently the net convergence is super sensitive to param initialization.
+  Out of three seed values I tried only one made the net converge (using the
+  exact same hparams elsewhere). The current default seed is the one I found.

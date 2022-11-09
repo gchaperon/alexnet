@@ -9,6 +9,7 @@ from torchvision.transforms import (
     RandomCrop,
     RandomHorizontalFlip,
     Resize,
+    FiveCrop,
     TenCrop,
     ToTensor,
     ToPILImage,
@@ -22,11 +23,13 @@ __all__ = [
     "RandomCrop",
     "RandomHorizontalFlip",
     "Resize",
+    "FiveCrop",
     "TenCrop",
     "ToTensor",
     "ToPILImage",
     "Normalize",
     "PCAAugment",
+    "Unsqueeze",
     "ToRGB",
 ]
 
@@ -79,6 +82,19 @@ class Stack:
 
     def __call__(self, tensors: tp.List[torch.Tensor]) -> torch.Tensor:
         return torch.stack(tensors, dim=self.dim)
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(dim={self.dim})"
+
+
+class Unsqueeze:
+    dim: int
+
+    def __init__(self, dim: int) -> None:
+        self.dim = dim
+
+    def __call__(self, tensor: torch.Tensor) -> torch.Tensor:
+        return torch.unsqueeze(tensor, dim=self.dim)
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(dim={self.dim})"

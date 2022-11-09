@@ -138,14 +138,17 @@ class LitAlexNet(AlexNet, pl.LightningModule):
 
         self.optimizer_opts = optimizer_opts
         self.extra_logging = extra_logging
+        # for graph logging in tensorboard
+        self.example_input_array = torch.randn(16, 3, 224, 224)
 
-        self.val_metrics = torchmetrics.MetricCollection(
+        metrics = torchmetrics.MetricCollection(
             {
                 "error@1": 1 - torchmetrics.Accuracy(top_k=1),  # type:ignore[operator]
                 "error@5": 1 - torchmetrics.Accuracy(top_k=5),  # type:ignore[operator]
             },
-            prefix="val/",
         )
+        self.val_metrics = metrics.clone(prefix="val/")
+        self.test_metrics = metrics.clone(prefix="test/")
 
     def training_step(
         self, batch: tuple[torch.Tensor, torch.Tensor], batch_idx: int
@@ -199,6 +202,16 @@ class LitAlexNet(AlexNet, pl.LightningModule):
             }
         )
 
+    def test_step(
+        self, batch: tuple[torch.Tensor, torch.Tensor], batch_idx: int
+    ) -> None:
+        # breakpoint()
+        input, target = batch
+        bs, ncrops, c, h, w = input.size()
+        logits = self(input.view(-1, c, h, w))
+        logits_avg = logits.view(bs, ncrops, -1).mean(1)
+        self.log_dict(self.test_metrics(logits_avg, target))
+
     def configure_optimizers(self) -> dict[str, tp.Any]:
         optimizer = torch.optim.Adam(self.parameters(), **self.optimizer_opts)
         return dict(
@@ -215,7 +228,3 @@ class LitAlexNet(AlexNet, pl.LightningModule):
                 monitor="val/error@1",
             ),
         )
-
-    @property
-    def example_input_array(self) -> torch.Tensor:
-        return torch.randn(128, 3, 224, 224)

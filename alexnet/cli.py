@@ -25,25 +25,32 @@ _task_dispatch = dict(
 )
 
 
-@click.command()
+@click.command(context_settings=dict(show_default=True))
+@click.option("--task", type=click.Choice(tp.get_args(_TaskT)), required=True)
 @click.option("--batch-size", default=128)
 @click.option("--dropout", default=0.5)
-@click.option("--task", type=click.Choice(tp.get_args(_TaskT)), required=True)
 @click.option("--learn-rate", default=0.0001)
-@click.option("--seed", default=42)
+@click.option("--seed", default=12331)
 @click.option(
     "--extra-logging",
     is_flag=True,
     default=False,
-    help="Wether to log histograms of parameters and grads",
+    help="Whether to log histograms of parameters and grads.",
+)
+@click.option(
+    "--fast-dev-run",
+    is_flag=True,
+    default=False,
+    help="Run only a couple of steps, to check if everything is working properly.",
 )
 def cli(
+    task: _TaskT,
     batch_size: int,
     dropout: float,
-    task: _TaskT,
     learn_rate: float,
     seed: int,
     extra_logging: bool,
+    fast_dev_run: bool,
 ) -> None:
     print(f"train called with args {locals()}")
     pl.seed_everything(seed, workers=True)
@@ -54,8 +61,11 @@ def cli(
         dropout=dropout,
         extra_logging=extra_logging,
     )
-    # print(model)
     datamodule = datamodule_cls("data", batch_size=batch_size)
+
+    checkpoint_callback = pl.callbacks.ModelCheckpoint(
+        monitor="val/error@1", mode="min"
+    )
     trainer = pl.Trainer(
         accelerator="gpu",
         devices=1,
@@ -67,16 +77,16 @@ def cli(
         callbacks=[
             pl.callbacks.EarlyStopping(
                 monitor="val/error@1",
-                # NOTE: val_check_interval is 4 times per epoch, so this
-                # patience value means no improvement in the last 10 epochs
-                patience=10 * 4,
+                patience=10,
                 mode="min",
                 stopping_threshold=0.0,
             ),
+            checkpoint_callback,
             pl.callbacks.LearningRateMonitor(),
         ],
-        enable_checkpointing=False,
-        val_check_interval=1 / 4,
+        fast_dev_run=fast_dev_run,
     )
     trainer.fit(model, datamodule)
-    # trainer.test(model, datamodule)
+    trainer.test(
+        model, datamodule, ckpt_path=checkpoint_callback.best_model_path or None
+    )

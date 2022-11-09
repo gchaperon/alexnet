@@ -215,7 +215,9 @@ class _BaseDataModule(pl.LightningDataModule):
     def test_dataloader(self) -> torch.utils.data.DataLoader[ImageNetItem]:
         return torch.utils.data.DataLoader(
             self.test_dataset,
-            batch_size=2 * self.batch_size,
+            # NOTE: Each batch will contain 5 or 10 images because of 5 or 10
+            # crop, so these batches use a lot of memory
+            batch_size=self.batch_size,
             shuffle=False,
             num_workers=min(os.cpu_count() or 0, 8),
         )
@@ -288,6 +290,7 @@ class LitMNIST(_BaseTorchVisionDataModule):
                 transforms.Resize(224),
                 transforms.ToTensor(),
                 transforms.Normalize(**self._normalize_args),
+                transforms.Unsqueeze(0),
             ]
         )
 
@@ -326,6 +329,7 @@ class LitFashionMNIST(_BaseTorchVisionDataModule):
                 transforms.Resize(224),
                 transforms.ToTensor(),
                 transforms.Normalize(**self._normalize_args),
+                transforms.Unsqueeze(0),
             ]
         )
 
@@ -359,9 +363,11 @@ class LitCIFAR10(_BaseTorchVisionDataModule):
         )
         self.test_transform = transforms.Compose(
             [
-                transforms.Resize(224),
+                transforms.Resize(256),
                 transforms.ToTensor(),
                 transforms.Normalize(**self._normalize_args),
+                transforms.TenCrop(224),
+                transforms.Stack(),
             ]
         )
 
@@ -405,7 +411,7 @@ class LitImageNet(_BaseImageNetDataModule):
 
     nclasses: int = 1000
     dataset_cls = ImageNet
-    _total_train = 1_281_167
+    _total_train = 1_281_16
     _nval = 50_000
     _normalize_args = dict(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
@@ -424,7 +430,7 @@ class LitImageNet(_BaseImageNetDataModule):
         )
         self.val_transform = transforms.Compose(
             [
-                transforms.Resize(256),
+                transforms.Resize(224),
                 transforms.CenterCrop(224),
                 transforms.ToTensor(),
                 transforms.Normalize(**self._normalize_args),
@@ -471,8 +477,10 @@ class LitTinyImageNet(_BaseImageNetDataModule):
         )
         self.test_transform = transforms.Compose(
             [
-                transforms.Resize(224),
+                transforms.Resize(256),
                 transforms.ToTensor(),
                 transforms.Normalize(**self._normalize_args),
+                transforms.TenCrop(224),
+                transforms.Stack(),
             ]
         )
