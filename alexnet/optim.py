@@ -83,6 +83,7 @@ class AlexNetSGD(torch.optim.Optimizer):
                     - group["weight_decay"] * group["lr"] * param
                     - group["lr"] * param.grad
                 )
+                # NOTE: in-place add, important detail
                 param += next_momentum
                 self.state[param]["running_momentum"] = next_momentum
 

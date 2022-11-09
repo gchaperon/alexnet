@@ -58,7 +58,7 @@ cd ..
 - [ ] momentum 0.9 (see notes about optimization below)
 - [ ] weight decay 0.0005 (see notes about optimzation below)
 - [x] weight init is guassian with mean 0, std 0.01. Bias in 2, 4, 5 conv layers and also fc layers with constant 1, bias in other layers init with 0
-- [ ] same lr for al layers, start at 0.01 (somewhat, see notes)
+- [ ] same lr for al layers, start at 0.01 (close, but see notes)
 - [x] decay learn rate by factor of 10 when val error stops improving. This results in 3 reductions during training.
 - [x] 90 epochs, which took 5/6 days.
 
@@ -67,7 +67,7 @@ cd ..
 * Optimizer changed, [other
   user](https://github.com/dansuh17/alexnet-pytorch/blob/8aeaedd79a462b79d5d483d6774e344ca1738570/model.py#L142)
   also saw poor performance using `optim.SGD`. I even implemented the actual
-  optimizer step described in the paper, since it's a little bit different that
-  pytorch's algortihm, but saw no improvemente. I kept Adam optim and used the
-  "standard" learn rate for adam 1e-3, but still lowered it on plateau.
+  optimizer step described in the paper, since it's a little bit different than
+  pytorch's algortihm, but I saw no improvement. I kept Adam optim and used a
+  learn rate of 1e-4, and also lowered it on plateau.
 

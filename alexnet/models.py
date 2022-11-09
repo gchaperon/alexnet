@@ -6,8 +6,6 @@ import torch.nn as nn
 import typing as tp
 import pytorch_lightning as pl
 
-# import alexnet.optim as optim
-
 
 class _Repeat(nn.Module):
     repeat_args: tp.Sequence[int]
@@ -98,7 +96,7 @@ class AlexNet(nn.Module):
             nn.Dropout(dropout),
             nn.Linear(4096, nclasses),
         )
-        # self.reset_parameters()
+        self.reset_parameters()
 
     def forward(self, input: torch.Tensor) -> torch.Tensor:
         features = self.features(input)
@@ -106,37 +104,40 @@ class AlexNet(nn.Module):
         logits: torch.Tensor = self.classifier(flattened)
         return logits
 
-    # def reset_parameters(self) -> None:
-    #     for name, parameter in self.named_parameters():
-    #         if "weight" in name:
-    #             nn.init.normal_(parameter, mean=0.0, std=0.01)
-    #         elif "bias" in name:
-    #             nn.init.constant_(parameter, 0.0)
+    def reset_parameters(self) -> None:
+        for name, parameter in self.named_parameters():
+            if "weight" in name:
+                nn.init.normal_(parameter, mean=0.0, std=0.01)
+            elif "bias" in name:
+                nn.init.constant_(parameter, 0.0)
 
-    #     # special cases where bias is initialized with 1
-    #     for module in itertools.chain(
-    #         (self.features[i] for i in (5, 11, 13)),
-    #         (m for m in self.classifier if isinstance(m, nn.Linear)),
-    #     ):
-    #         nn.init.constant_(module.bias, 1.0)
+        # special cases where bias is initialized with 1
+        for module in itertools.chain(
+            (self.features[i] for i in (5, 11, 13)),
+            (m for m in self.classifier if isinstance(m, nn.Linear)),
+        ):
+            nn.init.constant_(module.bias, 1.0)
 
 
 class _OptimizerOpts(tp.TypedDict):
     lr: float
-    momentum: float
-    weight_decay: float
 
 
 class LitAlexNet(AlexNet, pl.LightningModule):
     optimizer_opts: _OptimizerOpts
 
     def __init__(
-        self, nclasses: int, optimizer_opts: _OptimizerOpts, dropout: float = 0.0
+        self,
+        nclasses: int,
+        optimizer_opts: _OptimizerOpts,
+        dropout: float = 0.0,
+        extra_logging: bool = False,
     ) -> None:
         super().__init__(nclasses, dropout)
         self.save_hyperparameters()
 
         self.optimizer_opts = optimizer_opts
+        self.extra_logging = extra_logging
 
         self.val_metrics = torchmetrics.MetricCollection(
             {
@@ -155,6 +156,36 @@ class LitAlexNet(AlexNet, pl.LightningModule):
         self.log("train/loss", loss)
         return loss
 
+    def on_after_backward(self) -> None:
+        """Log info about params and gradients"""
+        if not self.extra_logging:
+            return
+
+        trainer = self.trainer
+
+        cats = ["weight", "bias"]
+        if trainer.global_step % trainer.log_every_n_steps == 0:
+            tensorboard = self.logger.experiment
+            for name, parameter in self.named_parameters():
+                # log param avg, param hist, grad avg and grad hist
+                cat_suffix = cats[next(i for i, cat in enumerate(cats) if cat in name)]
+                tensorboard.add_scalar(
+                    f"param_avg.{cat_suffix}/{name}",
+                    torch.mean(parameter),
+                    trainer.global_step,
+                )
+                tensorboard.add_histogram(
+                    f"params.{cat_suffix}/{name}", parameter, trainer.global_step
+                )
+                tensorboard.add_scalar(
+                    f"grad_avg.{cat_suffix}/{name}",
+                    torch.mean(parameter.grad),
+                    trainer.global_step,
+                )
+                tensorboard.add_histogram(
+                    f"grads.{cat_suffix}/{name}", parameter.grad, trainer.global_step
+                )
+
     def validation_step(
         self, batch: tuple[torch.Tensor, torch.Tensor], batch_idx: int
     ) -> None:
@@ -169,7 +200,7 @@ class LitAlexNet(AlexNet, pl.LightningModule):
         )
 
     def configure_optimizers(self) -> dict[str, tp.Any]:
-        optimizer = torch.optim.SGD(self.parameters(), **self.optimizer_opts)
+        optimizer = torch.optim.Adam(self.parameters(), **self.optimizer_opts)
         return dict(
             optimizer=optimizer,
             lr_scheduler=dict(
@@ -177,10 +208,14 @@ class LitAlexNet(AlexNet, pl.LightningModule):
                     optimizer,
                     mode="min",
                     factor=0.1,
-                    patience=3,
+                    patience=5,
                     min_lr=self.optimizer_opts["lr"] * 0.1**3,
                 ),
                 interval="epoch",
                 monitor="val/error@1",
             ),
         )
+
+    @property
+    def example_input_array(self) -> torch.Tensor:
+        return torch.randn(128, 3, 224, 224)
