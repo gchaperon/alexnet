@@ -1,7 +1,7 @@
 # alexnet
 My replication code for the [AlexNet paper](https://papers.nips.cc/paper/2012/hash/c399862d3b9d6b76c8436e924a68c45b-Abstract.html). 
 
-tldr: go to (Results)[#results]
+tldr: go to [Results](#results)
 
 ## Data
 The data used is ImageNet 2012. I downloaded it from kaggle.  The paper also
