@@ -411,7 +411,7 @@ class LitImageNet(_BaseImageNetDataModule):
 
     nclasses: int = 1000
     dataset_cls = ImageNet
-    _total_train = 1_281_16
+    _total_train = 1_281_167
     _nval = 50_000
     _normalize_args = dict(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
