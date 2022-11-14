@@ -62,7 +62,20 @@ python -m alexnet --task imagenet
 
 ## Results
 
-WIP: currently training, takes around 4 days on an RTX3090, i think my code is (disk)io bound
+See the training curves in the [tensorboard.dev](https://tensorboard.dev/experiment/dKB37FAMRwukVz1Sv4QCQA/) experiment.
+
+All experiments were done using an RTX3090. ImageNet training took ~3 days to reach 100 epochs
+(hardware has come a long way since 2012, compare with the 5 days it took on an RTX580).
+
+Below are the results on different tasks.
+
+|         | imagenet<br/>(my experiment) | imagenet<br/>(paper) | mnist | fashion-mnist | cifar10 | cifar100 | tiny-imagenet |
+|---------|--------------------------|------------------|-------|---------------|---------|----------|---------------|
+| error@1 | 0.48                     | 0.40             | 0.01  | 0.09          | 0.13    | 0.41     | 0.57          |
+| error@5 | 0.25                     | 0.18             | 0.00  | 0.00          | 0.01    | 0.16     | 0.32          |
+
+
+Results aren't that close, but also not that far off. As we can see in the training curves, we might have been able to obtain a better results with more training time, since val error seemed to be going down still when training stoped. For this scope however it's good enough.
 
 
 ## Summary of features / techniques used in the paper
@@ -109,5 +122,5 @@ WIP: currently training, takes around 4 days on an RTX3090, i think my code is (
   pytorch's algortihm, but I saw no improvement. I kept Adam optim and used a
   learn rate of 1e-4, and also lowered it on plateau.
 * Apparently the net convergence is super sensitive to param initialization.
-  Out of three seed values I tried only one made the net converge (using the
+  Out of three seed values I tried only one made the net learn in the imagenet experiment (using the
   exact same hparams elsewhere). The current default seed is the one I found.
