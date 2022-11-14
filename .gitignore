@@ -4,6 +4,7 @@ __pycache__/
 /env/
 /runs/
 /logs/
+/r2_logs/
 .rsyncignore
 
 .ipynb_checkpoints/
